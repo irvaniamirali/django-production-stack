@@ -30,7 +30,10 @@ services:
     restart: unless-stopped
 
   django:
-    image: ghcr.io/${GITHUB_REPOSITORY:-irvaniamirali/django-production-stack}:${TAG:-latest} 
+    build:
+      context: ../.
+      dockerfile: docker/django/Dockerfile
+    image: django-app:latest
     container_name: django_app
     env_file:
       - ../.env
