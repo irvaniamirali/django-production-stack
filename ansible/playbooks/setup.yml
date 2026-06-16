@@ -1,0 +1,76 @@
+---
+- name: Initial Server Setup - Install Docker and Dependencies
+  hosts: debian-vm
+  become: yes
+  gather_facts: yes
+  
+  vars_files:
+    - ../inventories/production/group_vars/all.yml
+  
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    - name: Install required system packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+          - git
+        state: present
+    
+    - name: Add Docker GPG key (using get_url - modern method)
+      get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /usr/share/keyrings/docker-archive-keyring.asc
+        mode: '0644'
+    
+    - name: Add Docker repository (using apt_repository - still works)
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.asc] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        state: present
+        update_cache: yes
+    
+    - name: Install Docker and Docker Compose
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+    
+    - name: Add current user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+    
+    - name: Create project directory
+      file:
+        path: "{{ project_root }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+    
+    - name: Ensure Docker service is running
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+    
+    - name: Display setup completion
+      debug:
+        msg: |
+          Server Setup Complete!
+          Docker installed
+          User {{ ansible_user }} added to docker group
+          Project directory created: {{ project_root }}
+          You may need to reconnect for group changes to take effect
