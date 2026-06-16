@@ -1,0 +1,26 @@
+---
+# Application Configuration (Non-sensitive)
+project_name: django_app
+project_root: /opt/{{ project_name }}
+
+# Docker Configuration
+docker_compose_version: "2.23.0"
+docker_network_name: django_network
+
+# Nginx Configuration
+nginx_port: 80
+nginx_container_name: nginx_server
+
+# Django Configuration (non-sensitive defaults)
+django_debug: "False"
+django_db_host: db
+django_db_port: 5432
+
+# Database Configuration (non-sensitive)
+db_name: django_db
+db_user: django_user
+
+# References to vault (sensitive data) - THESE MUST MATCH vault.yml
+django_secret_key: "{{ vault_django_secret_key }}"
+django_allowed_hosts: "{{ vault_django_allowed_hosts }}"
+db_password: "{{ vault_db_password }}"

@@ -1,0 +1,139 @@
+---
+- name: Deploy Dockerized Django Application
+  hosts: debian-vm
+  become: yes
+  gather_facts: yes
+
+  vars_files:
+    - ../inventories/production/group_vars/vault.yml
+
+  vars:
+    docker_compose_dir: "{{ project_root }}/docker"
+    container_names:
+      db: django_db
+      app: django_app
+
+  tasks:
+    - name: Create project directory structure
+      file:
+        path: "{{ project_root }}/{{ item }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      loop:
+        - ""
+        - docker
+        - src
+        - templates
+
+    - name: Copy application files
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ project_root }}/{{ item.dest }}"
+        mode: "{{ item.mode | default('0755') }}"
+      loop:
+        - { src: "../../docker/", dest: "docker/", mode: '0755' }
+        - { src: "../../src/", dest: "src/", mode: '0755' }
+        - { src: "../../templates/", dest: "templates/", mode: '0755' }
+        - { src: "../../manage.py", dest: "manage.py" }
+        - { src: "../../requirements.txt", dest: "requirements.txt", mode: '0644' }
+
+    - name: Set ownership recursively
+      file:
+        path: "{{ project_root }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        recurse: yes
+
+    - name: Create .env file from template
+      copy:
+        content: |
+          SECRET_KEY={{ django_secret_key }}
+          DEBUG={{ django_debug }}
+          ALLOWED_HOSTS={{ django_allowed_hosts }}
+          DB_NAME={{ db_name }}
+          DB_USER={{ db_user }}
+          DB_PASSWORD={{ db_password }}
+          DB_HOST=db
+          DB_PORT=5432
+        dest: "{{ project_root }}/.env"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      no_log: true
+
+    - name: Create Docker network
+      docker_network:
+        name: django_network
+        driver: bridge
+      ignore_errors: yes
+
+    - name: Start database container
+      shell: |
+        cd {{ docker_compose_dir }}
+        docker compose up -d db
+      register: db_start
+      changed_when: db_start.stdout != ""
+
+    - name: Wait for database to be ready
+      shell: |
+        docker exec {{ container_names.db }} pg_isready -U {{ db_user }} -d {{ db_name }}
+      register: db_ready
+      retries: 30
+      delay: 2
+      until: db_ready.rc == 0
+      changed_when: false
+
+    - name: Build and start Django application
+      shell: |
+        cd {{ docker_compose_dir }}
+        docker compose up -d --build django
+      register: django_build
+      changed_when: django_build.stdout != ""
+
+    - name: Wait for Django container initialization
+      pause:
+        seconds: 10
+
+    - name: Run database migrations
+      command: |
+        docker exec {{ container_names.app }} python manage.py migrate --noinput
+      register: migrations
+      failed_when: false
+      changed_when: "'No migrations to apply' not in migrations.stdout"
+
+    - name: Display migration output
+      debug:
+        msg: "{{ migrations.stdout_lines }}"
+      when: migrations.stdout_lines | length > 0
+
+    - name: Collect static files
+      command: |
+        docker exec {{ container_names.app }} python manage.py collectstatic --noinput
+      register: static_collection
+      failed_when: false
+      changed_when: static_collection.stdout is defined
+
+    - name: Start nginx container
+      shell: |
+        cd {{ docker_compose_dir }}
+        docker compose up -d nginx
+      register: nginx_start
+      changed_when: nginx_start.stdout != ""
+
+    - name: Get container status
+      command: docker ps --format "table {{ '{{.Names}}' }}\t{{ '{{.Status}}' }}"
+      register: containers
+      changed_when: false
+
+    - name: Display deployment summary
+      debug:
+        msg: |
+          Deployment Complete!
+
+          Containers:
+          {{ containers.stdout }}
+
+          URL: http://{{ ansible_host }}:80
